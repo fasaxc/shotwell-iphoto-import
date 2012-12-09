@@ -65,6 +65,30 @@ def md5_for_file(filename, block_size=2**20):
             md5.update(data)
     return md5.hexdigest()
 
+def is_file_same(f1, f2):
+    return os.path.samefile(f1, f2) or md5_for_file(f1) == md5_for_file(f2)
+
+def safe_link_file(src, dst):
+    assert os.path.exists(src)
+    if os.path.exists(dst):
+        if is_file_same(src, dst):
+            # Nothing to do
+            return
+        else:
+            raise Exception("Destination file %s exists and not equal to %s" % (dst, src))
+    else:
+        # Try to link the file
+        try:
+            os.makedirs(os.path.dirname(dst))
+        except Exception:
+            pass
+        try:
+            os.link(src, dst)
+        except:
+            _log.debug("Hard link failed, falling back on copy")
+            shutil.copy(src, dst)
+            
+
 def import_photos(iphoto_dir, shotwell_db, photos_dir):
     # Sanity check the iPhoto dir and Shotwell DB.
     _log.debug("Performing sanity checks on iPhoto and Shotwell DBs.")
@@ -107,7 +131,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                 path = join_path(new_prefix, path.strip(os.path.sep)) 
             return path
         photos = {} # Map from photo ID to photo info.
-        
+        copy_queue = []
         
 #                  id = 224
 #            filename = /home/shaun/Pictures/Photos/2008/03/24/DSCN2416 (Modified (2)).JPG
@@ -152,8 +176,11 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                 new_mod_path = None
                 mod_image_path = None
                 mod_file_size = None
+                copy_queue.append((orig_image_path, new_orig_path))
             else:
                 mod_file_size = os.path.getsize(mod_image_path)
+                copy_queue.append((orig_image_path, new_orig_path))
+                copy_queue.append((mod_image_path, new_mod_path))
                 
             mime, _ = mimetypes.guess_type(orig_image_path)
                 
@@ -363,11 +390,13 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                 _log.exception("Failed to insert photo %s" % photo)
                 raise
             
-            
+        print >> sys.stderr, "Skipped importing these files:\n", "\n".join(skipped)
+        print >> sys.stderr, "%s file skipped (they will still be copied)" % len(skipped)
         
-        print >> sys.stderr, "Skipped these files:\n", "\n".join(skipped)
-        print >> sys.stderr, "%s file skipped", len(skipped)
-        db.rollback()
+        for src, dst in copy_queue:
+            safe_link_file(src, dst)
+        
+        db.commit()
         # Commit the transaction.
     
     
