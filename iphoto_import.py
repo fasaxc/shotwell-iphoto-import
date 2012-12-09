@@ -73,8 +73,8 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
         _log.debug("Sanity checks passed.")
         
         # Back up the Shotwell DB.
-        now = time.strftime('%Y-%m-%d_%H%M%S')
-        db_backup = "%s.iphotobak_%s" % (shotwell_db, now)
+        fmt_now = time.strftime('%Y-%m-%d_%H%M%S')
+        db_backup = "%s.iphotobak_%s" % (shotwell_db, fmt_now)
         _log.debug("Backing up shotwell DB to %s", db_backup)
         shutil.copy(shotwell_db, db_backup)
         _log.debug("Backup complete")
