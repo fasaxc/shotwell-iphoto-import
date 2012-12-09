@@ -53,7 +53,7 @@ def exif_datetime_to_time(dt):
         else:
             raise Exception("Failed to parse date %s" % dt)
     
-    return time.mktime(dt.timetuple())
+    return int(time.mktime(dt.timetuple()))
 
 def md5_for_file(filename, block_size=2**20):
     with open(filename, "rb") as f:
@@ -68,7 +68,7 @@ def md5_for_file(filename, block_size=2**20):
 def import_photos(iphoto_dir, shotwell_db, photos_dir):
     # Sanity check the iPhoto dir and Shotwell DB.
     _log.debug("Performing sanity checks on iPhoto and Shotwell DBs.")
-    now = time.time()
+    now = int(time.time())
     album_data_filename = join_path(iphoto_dir, "AlbumData.xml")
     if not os.path.exists(album_data_filename):
         _log.error("Failed to find expected file inside iPhoto library: %s", 
@@ -204,7 +204,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                            "caption": caption,
                            "rating": i_photo["Rating"],
                            "event": i_photo["Roll"],
-                           "date": parse_date(i_photo["DateAsTimerInterval"]),
+                           "orig_exposure_time": int(parse_date(i_photo["DateAsTimerInterval"])),
                            "width": w,
                            "height": h,
                            "mod_width": mod_w,
@@ -242,6 +242,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                     read_metadata(mod_image_path, photo, "mod_")
             except Exception:
                 _log.error("**** Skipping %s" % orig_image_path)
+                skipped.append(orig_image_path)
                 continue
             
             photos[key] = photo
@@ -283,6 +284,10 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
 #original_orientation = 1
 #         file_format = 0
 #        time_created = 1348945103
+            if "event_id" not in photo:
+                _log.error("Photo didn't have an event: %s", photo)
+                skipped.append(photo["orig_image_path"])
+                continue
             editable_id = -1
             if photo["mod_image_path"] is not None:
                 # This photo has a backing image
@@ -360,7 +365,8 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
             
             
         
-        print >> sys.stderr, "Skipped these files:", skipped
+        print >> sys.stderr, "Skipped these files:\n", "\n".join(skipped)
+        print >> sys.stderr, "%s file skipped", len(skipped)
         db.rollback()
         # Commit the transaction.
     
