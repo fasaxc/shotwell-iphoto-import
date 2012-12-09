@@ -14,6 +14,7 @@ from PIL import Image #@UnresolvedImport
 from pyexiv2.metadata import ImageMetadata
 import hashlib
 import mimetypes
+import re
 
 # Shotwell's orientation enum
 TOP_LEFT = 1
@@ -37,7 +38,21 @@ _log = logging.getLogger("iphotoimport")
 
 SUPPORTED_SHOTWELL_SCHEMAS = (16, )
 
-def datetime_to_time(dt):
+def exif_datetime_to_time(dt):
+    if isinstance(dt, basestring):
+        # Looks like the exif lib couldn't parse the date.  I've seen dates 
+        # like 2007:00:00 00:00:00.  Let's try that.
+        match = re.match(r'(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)', dt)
+        if match:
+            y, m, d, h, mn, s = [int(x) for x in match.groups()]
+            m += 1 # datetime uses 1-indexed months/days
+            assert m <= 12
+            d += 1
+            assert d <= 31
+            dt = datetime.datetime(y, m, d, h, mn, s)
+        else:
+            raise Exception("Failed to parse date %s" % dt)
+    
     return time.mktime(dt.timetuple())
 
 def md5_for_file(filename, block_size=2**20):
@@ -48,7 +63,7 @@ def md5_for_file(filename, block_size=2**20):
             if not data:
                 break
             md5.update(data)
-    return md5.digest()
+    return md5.hexdigest()
 
 def import_photos(iphoto_dir, shotwell_db, photos_dir):
     # Sanity check the iPhoto dir and Shotwell DB.
@@ -123,12 +138,12 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
 #   develop_camera_id = -1
 # develop_embedded_id = -1
         skipped = []
-        for key, photo in album_data["Master Image List"].items():
-            mod_image_path = fix_prefix(photo.get("ImagePath", None))
-            orig_image_path = fix_prefix(photo.get("OriginalPath", None))
+        for key, i_photo in album_data["Master Image List"].items():
+            mod_image_path = fix_prefix(i_photo.get("ImagePath", None))
+            orig_image_path = fix_prefix(i_photo.get("OriginalPath", None))
             
-            new_mod_path = fix_prefix(photo.get("ImagePath"), new_prefix=photos_dir)
-            new_orig_path = fix_prefix(photo.get("OriginalPath", None), 
+            new_mod_path = fix_prefix(i_photo.get("ImagePath"), new_prefix=photos_dir)
+            new_orig_path = fix_prefix(i_photo.get("OriginalPath", None), 
                                        new_prefix=photos_dir)
             
             if not orig_image_path:
@@ -150,7 +165,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                 skipped.append(orig_image_path)
                 continue
             
-            caption = photo.get("Caption", "")
+            caption = i_photo.get("Caption", "")
             
             img = Image.open(orig_image_path)
             w, h = img.size
@@ -160,16 +175,25 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
             
             mod_w, mod_h, mod_md5, mod_timestamp = None, None, None, None
             if mod_image_path:
-                mod_img = Image.open(mod_image_path)
-                mod_w, mod_h = mod_img.size
-                mod_md5 = md5_for_file(mod_image_path)
-                mod_timestamp = int(os.path.getmtime(mod_image_path))
+                try:
+                    mod_img = Image.open(mod_image_path)
+                except Exception:
+                    _log.error("Failed to open modified image %s, skipping", mod_image_path)
+                    orig_image_path = mod_image_path
+                    new_orig_path = new_mod_path
+                    new_mod_path = None
+                    mod_image_path = None
+                    mod_file_size = None
+                else:
+                    mod_w, mod_h = mod_img.size
+                    mod_md5 = md5_for_file(mod_image_path)
+                    mod_timestamp = int(os.path.getmtime(mod_image_path))
             
             file_format = FILE_FORMAT.get(mime, -1)
             if file_format == -1:
                 raise Exception("Unknown image type %s" % mime)
             
-            photos[key] = {"orig_image_path": orig_image_path,
+            photo = {"orig_image_path": orig_image_path,
                            "mod_image_path": mod_image_path,
                            "new_mod_path": new_mod_path,
                            "new_orig_path": new_orig_path,
@@ -178,22 +202,22 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                            "mod_timestamp": mod_timestamp,
                            "orig_timestamp": orig_timestamp,
                            "caption": caption,
-                           "rating": photo["Rating"],
-                           "event": photo["Roll"],
-                           "date": parse_date(photo["DateAsTimerInterval"]),
+                           "rating": i_photo["Rating"],
+                           "event": i_photo["Roll"],
+                           "date": parse_date(i_photo["DateAsTimerInterval"]),
                            "width": w,
                            "height": h,
                            "mod_width": mod_w,
                            "mod_height": mod_h,
-                           "md5": md5,
+                           "orig_md5": md5,
                            "mod_md5": md5,
                            "file_format": file_format,
-                           "orientation": 1,
-                           "original_orientation": 1,
                            "time_created": now,
                            "import_id": now,
                            }
             def read_metadata(path, photo, prefix="orig_"):
+                photo[prefix + "orientation"] = 1
+                photo[prefix + "original_orientation"] = 1
                 try:
                     meta = ImageMetadata(path)
                     meta.read()
@@ -201,18 +225,26 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                         photo[prefix + "orientation"] = meta["Exif.Image.Orientation"].value
                         photo[prefix + "original_orientation"] = meta["Exif.Image.Orientation"].value
                     except KeyError:
-                        pass
+                        print
+                        _log.debug("Failed to read the orientation from %s" % path)
                     exposure_dt = meta["Exif.Image.DateTime"].value
-                    photo[prefix + "exposure_time"] = datetime_to_time(exposure_dt)
+                    photo[prefix + "exposure_time"] = exif_datetime_to_time(exposure_dt)
                 except KeyError:
                     pass
                 except Exception:
                     print
                     _log.exception("Failed to read date from %s", path)
+                    raise
                     
-            read_metadata(orig_image_path, photos[key], "orig_")
-            if mod_image_path:
-                read_metadata(mod_image_path, photos[key], "mod_")
+            try:
+                read_metadata(orig_image_path, photo, "orig_")
+                if mod_image_path:
+                    read_metadata(mod_image_path, photo, "mod_")
+            except Exception:
+                _log.error("**** Skipping %s" % orig_image_path)
+                continue
+            
+            photos[key] = photo
         
         events = {}
         for event in album_data["List of Rolls"]:
@@ -265,7 +297,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                                                    time_created)
                     VALUES (:new_mod_path,
                             :mod_timestamp,
-                            :mod_filesize,
+                            :mod_file_size,
                             :mod_width,
                             :mod_height,
                             :mod_original_orientation,
@@ -275,52 +307,56 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                 editable_id = c.lastrowid
             
             photo["editable_id"] = editable_id
-            c = db.execute("""
-                INSERT INTO PhotoTable (filename,
-                                        width,
-                                        height,
-                                        filesize,
-                                        timestamp,
-                                        exposure_time,
-                                        orientation,
-                                        original_orientation,
-                                        import_id,
-                                        event_id,
-                                        md5,
-                                        time_created,
-                                        flags,
-                                        rating,
-                                        file_format,
-                                        title,
-                                        editable_id,
-                                        metadata_dirty,
-                                        developer,
-                                        develop_shotwell_id,
-                                        develop_camera_id,
-                                        develop_embedded_id)
-                VALUES (:new_mod_path,
-                        :width,
-                        :height,
-                        :file_size,
-                        :orig_timestamp,
-                        :orig_exposure_time,
-                        :orig_orientation,
-                        :orig_original_orientetion,
-                        :import_id,
-                        :event_id,
-                        :orig_md5,
-                        :time_created,
-                        0,
-                        :rating,
-                        :file_format,
-                        :caption,
-                        :editable_id,
-                        1,
-                        'SHOTWELL',
-                        -1,
-                        -1,
-                        -1);
-            """, photo)
+            try:
+                c = db.execute("""
+                    INSERT INTO PhotoTable (filename,
+                                            width,
+                                            height,
+                                            filesize,
+                                            timestamp,
+                                            exposure_time,
+                                            orientation,
+                                            original_orientation,
+                                            import_id,
+                                            event_id,
+                                            md5,
+                                            time_created,
+                                            flags,
+                                            rating,
+                                            file_format,
+                                            title,
+                                            editable_id,
+                                            metadata_dirty,
+                                            developer,
+                                            develop_shotwell_id,
+                                            develop_camera_id,
+                                            develop_embedded_id)
+                    VALUES (:new_orig_path,
+                            :width,
+                            :height,
+                            :orig_file_size,
+                            :orig_timestamp,
+                            :orig_exposure_time,
+                            :orig_orientation,
+                            :orig_original_orientation,
+                            :import_id,
+                            :event_id,
+                            :orig_md5,
+                            :time_created,
+                            0,
+                            :rating,
+                            :file_format,
+                            :caption,
+                            :editable_id,
+                            1,
+                            'SHOTWELL',
+                            -1,
+                            -1,
+                            -1);
+                """, photo)
+            except Exception:
+                _log.exception("Failed to insert photo %s" % photo)
+                raise
             
             
         
