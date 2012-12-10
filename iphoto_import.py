@@ -270,8 +270,10 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                     
             try:
                 read_metadata(orig_image_path, photo, "orig_")
+                photo["orientation"] = photo["orig_orientation"]
                 if mod_image_path:
                     read_metadata(mod_image_path, photo, "mod_")
+                    photo["orientation"] = photo["mod_orientation"]
             except Exception:
                 _log.error("**** Skipping %s" % orig_image_path)
                 skipped.append(orig_image_path)
@@ -374,7 +376,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                             :orig_file_size,
                             :orig_timestamp,
                             :orig_exposure_time,
-                            :orig_orientation,
+                            :orientation,
                             :orig_original_orientation,
                             :import_id,
                             :event_id,
