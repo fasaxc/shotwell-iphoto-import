@@ -69,7 +69,7 @@ def is_file_same(f1, f2):
     return os.path.samefile(f1, f2) or md5_for_file(f1) == md5_for_file(f2)
 
 def safe_link_file(src, dst):
-    assert os.path.exists(src)
+    assert os.path.exists(src), "%s didn't exist" % src
     if os.path.exists(dst):
         if is_file_same(src, dst):
             # Nothing to do
@@ -170,17 +170,22 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
             new_orig_path = fix_prefix(i_photo.get("OriginalPath", None), 
                                        new_prefix=photos_dir)
             
-            if not orig_image_path:
+            if not orig_image_path or not os.path.exists(mod_image_path):
                 orig_image_path = mod_image_path
                 new_orig_path = new_mod_path
                 new_mod_path = None
                 mod_image_path = None
                 mod_file_size = None
-                copy_queue.append((orig_image_path, new_orig_path))
             else:
                 mod_file_size = os.path.getsize(mod_image_path)
-                copy_queue.append((orig_image_path, new_orig_path))
-                copy_queue.append((mod_image_path, new_mod_path))
+                
+            if not os.path.exists(orig_image_path):
+                _log.error("Original file not found %s", orig_image_path)
+                skipped.append(orig_image_path)
+                continue
+            
+            copy_queue.append((orig_image_path, new_orig_path))
+            if mod_image_path: copy_queue.append((mod_image_path, new_mod_path))
                 
             mime, _ = mimetypes.guess_type(orig_image_path)
                 
