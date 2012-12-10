@@ -33,3 +33,6 @@ Limitations
 * Movies are not imported, but they are copied to the destination.
 * The script checks the version of the Shotwell and iPhoto libraries to make
   sure they are compatible.  If will reject versions it doesn't understand.
+* It's a bit slow.  10+ minutes to import 17k photos.
+* Shotwell will spin for a long time after the import while it generates 
+  thumbnails.  This took over an hour for my 17k photos.
