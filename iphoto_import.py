@@ -207,7 +207,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
             sys.stdout.flush()
             if mime not in ("image/jpeg", "image/png", "image/x-ms-bmp", "image/tiff"):
                 print
-                _log.error("Skipping %s, it's not an image %s", orig_image_path, mime)
+                _log.error("Skipping %s, it's not an image, it's a %s", orig_image_path, mime)
                 skipped.append(orig_image_path)
                 continue
             
