@@ -50,7 +50,7 @@ FILE_FORMAT = {
 
 _log = logging.getLogger("iphotoimport")
 
-SUPPORTED_SHOTWELL_SCHEMAS = (16, )
+SUPPORTED_SHOTWELL_SCHEMAS = (16, 20)
 
 def exif_datetime_to_time(dt):
     if isinstance(dt, basestring):
@@ -207,7 +207,7 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
             sys.stdout.flush()
             if mime not in ("image/jpeg", "image/png", "image/x-ms-bmp", "image/tiff"):
                 print
-                _log.error("Skipping %s, it's not an image %s", orig_image_path, mime)
+                _log.error("Skipping %s, it's not an image, it's a %s", orig_image_path, mime)
                 skipped.append(orig_image_path)
                 continue
             
@@ -261,6 +261,11 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                            "time_created": now,
                            "import_id": now,
                            }
+
+            # May be it's available in previous versions
+            if schema_version >= 20:
+                photo['comment'] = i_photo["Comment"]
+
             def read_metadata(path, photo, prefix="orig_"):
                 photo[prefix + "orientation"] = 1
                 photo[prefix + "original_orientation"] = 1
@@ -383,7 +388,8 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                                             developer,
                                             develop_shotwell_id,
                                             develop_camera_id,
-                                            develop_embedded_id)
+                                            develop_embedded_id,
+                                            comment)
                     VALUES (:new_orig_path,
                             :width,
                             :height,
@@ -405,7 +411,8 @@ def import_photos(iphoto_dir, shotwell_db, photos_dir):
                             'SHOTWELL',
                             -1,
                             -1,
-                            -1);
+                            -1,
+                            :comment);
                 """, photo)
             except Exception:
                 _log.exception("Failed to insert photo %s" % photo)
